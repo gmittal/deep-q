@@ -1,77 +1,87 @@
-from collections import deque
+import random
 import gym
 import numpy as np
-import random
-import tensorflow as tf
 from collections import deque
-from tensorflow.python.keras import Sequential
-from tensorflow.python.keras.layers import Dense, Conv2D
+from keras.models import Sequential
+from keras.layers import Dense
+from keras import backend as K
 
-env = gym.make('CartPole-v0')
+EPISODES = 5000
 
-GAMMA = 0.95
-EPSILON = 1.0
-EPSILON_MIN = 0.01
-EPSILON_DECAY = 0.995
-EPISODES = 10
+class DQNAgent:
+    def __init__(self, state_size, action_size):
+        self.state_size = state_size
+        self.action_size = action_size
+        self.memory = deque(maxlen=2000)
+        self.gamma = 0.95    # discount rate
+        self.epsilon = 1.0  # exploration rate
+        self.epsilon_min = 0.01
+        self.epsilon_decay = 0.995
+        self.model = self._build_model()
 
-memory = deque(maxlen=10000)
+    def _build_model(self):
+        # Neural Net for Deep-Q learning Model
+        model = Sequential()
+        model.add(Dense(24, input_dim=self.state_size, activation='relu'))
+        model.add(Dense(24, activation='relu'))
+        model.add(Dense(self.action_size, activation='linear'))
+        model.compile(loss='mse', optimizer='adam')
+        return model
 
-# Build the deep model
-model = Sequential()
-model.add(Dense(30, activation='relu', input_dim=4))
-model.add(Dense(128, activation='relu'))
-model.add(Dense(env.action_space.n, activation='linear'))
-model.compile(loss='mse', optimizer='adam', metrics=['accuracy'])
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
 
-def remember(state, action, reward, next_state, done):
-    memory.append((state, action, reward, next_state, done))
+    def act(self, state):
+        if np.random.rand() <= self.epsilon:
+            return random.randrange(self.action_size)
+        act_values = self.model.predict(state)
+        return np.argmax(act_values[0])  # returns action
 
-def act(state):
-    state = np.reshape(state, [1, 4])
-    if np.random.rand() <= EPSILON:
-        return env.action_space.sample()
-    return np.argmax(model.predict(state)[0])
+    def replay(self, batch_size):
+        minibatch = random.sample(self.memory, batch_size)
+        for state, action, reward, next_state, done in minibatch:
+            target = reward
+            if not done:
+                target = (reward + self.gamma *
+                          np.amax(self.model.predict(next_state)[0]))
+            target_f = self.model.predict(state)
+            target_f[0][action] = target
+            self.model.fit(state, target_f, epochs=1, verbose=0)
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
 
-def replay(batch_size):
-    global EPSILON
-    minibatch = random.sample(memory, batch_size)
-    for state, action, reward, next_state, done in minibatch:
-        target = reward
-        next_state = np.reshape(next_state, [1, 4])
-        if not done:
-            target = reward + GAMMA * np.amax(model.predict(next_state)[0])
-        state = np.reshape(state, [1, 4])
-        target_f = model.predict(state)
-        target_f[0][action] = target
-        model.fit(state, target_f, epochs=1, verbose=0)
-    if EPSILON > EPSILON_MIN:
-        EPSILON *= EPSILON_DECAY
+    def load(self, name):
+        self.model.load_weights(name)
 
-for episode in range(1000):
-    state = env.reset()
-    env.render()
-
-    for t in range(200):
-        action = act(state)
-        next_state, reward, done, _ = env.step(action)
-        remember(state, action, reward, next_state, done)
-        state = next_state
-        if done:
-            print("episode: {}/{}, score: {}".format(episode, 1000, t))
-            break
-
-    replay(12)
+    def save(self, name):
+        self.model.save_weights(name)
 
 
-# Test it out!
-s = env.reset()
-done = False
-episode_reward = 0
-while not done:
-    env.render()
-    a = act(s)
-    s2, r, done, info = env.step(a)
-    episode_reward += r
+if __name__ == "__main__":
+    env = gym.make('CartPole-v1')
+    state_size = env.observation_space.shape[0]
+    action_size = env.action_space.n
+    agent = DQNAgent(state_size, action_size)
+    # agent.load("./save/cartpole-dqn.h5")
+    done = False
+    batch_size = 32
 
-print(f"Episode Reward: {episode_reward}")
+    for e in range(EPISODES):
+        state = env.reset()
+        state = np.reshape(state, [1, state_size])
+        for time in range(500):
+            env.render()
+            action = agent.act(state)
+            next_state, reward, done, _ = env.step(action)
+            reward = reward if not done else -10
+            next_state = np.reshape(next_state, [1, state_size])
+            agent.remember(state, action, reward, next_state, done)
+            state = next_state
+            if done:
+                print("episode: {}/{}, score: {}, e: {:.2}"
+                      .format(e, EPISODES, time, agent.epsilon))
+                break
+            if len(agent.memory) > batch_size:
+                agent.replay(batch_size)
+        # if e % 10 == 0:
+        #     agent.save("./save/cartpole-dqn.h5")
