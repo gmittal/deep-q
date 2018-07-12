@@ -6,13 +6,13 @@ from keras.models import Sequential
 from keras.layers import Dense
 from keras import backend as K
 
-EPISODES = 5000
+EPISODES = 0
 
 class DQNAgent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
-        self.memory = deque(maxlen=2000)
+        self.memory = deque(maxlen=20000)
         self.gamma = 0.95    # discount rate
         self.epsilon = 1.0  # exploration rate
         self.epsilon_min = 0.01
@@ -64,12 +64,12 @@ if __name__ == "__main__":
     agent = DQNAgent(state_size, action_size)
     # agent.load("./save/cartpole-dqn.h5")
     done = False
-    batch_size = 32
+    batch_size = 64
 
-    for e in range(EPISODES):
-        state = env.reset()
+    while not done:
+        EPISODES += 1
         state = np.reshape(state, [1, state_size])
-        for time in range(500):
+        for time in range(1000):
             env.render()
             action = agent.act(state)
             next_state, reward, done, _ = env.step(action)
@@ -80,7 +80,8 @@ if __name__ == "__main__":
             if done:
                 print("episode: {}/{}, score: {}, e: {:.2}"
                       .format(e, EPISODES, time, agent.epsilon))
-                break
+                state = env.reset()
+                done = False
             if len(agent.memory) > batch_size:
                 agent.replay(batch_size)
         # if e % 10 == 0:
