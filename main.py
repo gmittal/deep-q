@@ -2,9 +2,19 @@ import gym
 import math
 import numpy as np
 import random
+import tensorflow as tf
 from collections import deque
+from keras import backend as K
 from keras.models import Sequential
 from keras.layers import Dense
+
+def huber_loss(y_true, y_pred):
+    err = y_true - y_pred
+    cond = K.abs(err) < 1.0
+    L2 = 0.5 * K.square(err)
+    L1 = 1.0 * (K.abs(err) - 0.5 * 1.0)
+    loss = tf.where(cond, L2, L1)
+    return K.mean(loss)
 
 class Agent:
     def __init__(self, state_size, action_size):
@@ -13,6 +23,7 @@ class Agent:
 
         self.memory = deque(maxlen=100000)
         self.model = self.build()
+        self.model_ = self.build()
 
         self.gamma = 0.99
         self.epsilon = 1
@@ -23,9 +34,9 @@ class Agent:
 
     def build(self):
         model = Sequential()
-        model.add(Dense(output_dim=64, activation='relu', input_dim=self.state_size))
-        model.add(Dense(output_dim=self.action_size, activation='linear'))
-        model.compile(loss='mse', optimizer='rmsprop')
+        model.add(Dense(64, activation='relu', input_dim=self.state_size))
+        model.add(Dense(self.action_size, activation='linear'))
+        model.compile(loss=huber_loss, optimizer='rmsprop')
         return model
 
     def act(self, state):
@@ -37,7 +48,9 @@ class Agent:
     def observe(self, sample):
         self.memory.append(sample)
 
-        # Epsilon reduction
+        if self.steps % 10 == 0:
+            self.model_.set_weights(self.model.get_weights())
+
         self.steps += 1
         self.epsilon = self.min_epsilon + (1 - self.min_epsilon) * math.exp(-self.decay * self.steps)
 
@@ -52,7 +65,7 @@ class Agent:
         next_states = np.array([(no_state if o[3] is None else o[3]) for o in batch])
 
         p = self.model.predict(states)
-        p_ = self.model.predict(next_states)
+        p_ = self.model_.predict(next_states)
 
         x = np.zeros((len(batch), self.state_size))
         y = np.zeros((len(batch), self.action_size))
@@ -96,8 +109,10 @@ def run(env, agent):
 
     print("Total reward: ", R)
 
+# Trains the DQN
+# Runs 5000 game episodes
 if __name__ == "__main__":
-    env = gym.make('MountainCar-v0')
+    env = gym.make('CartPole-v1')
     agent = Agent(env.observation_space.shape[0], env.action_space.n)
     for episode in range(5000):
         run(env, agent)
