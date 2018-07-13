@@ -48,7 +48,6 @@ class Agent:
         batch = random.sample(self.memory, 64)
 
         no_state = np.zeros(self.state_size)
-
         states = np.array([o[0] for o in batch])
         next_states = np.array([(no_state if o[3] is None else o[3]) for o in batch])
 
@@ -98,7 +97,7 @@ def run(env, agent):
     print("Total reward: ", R)
 
 if __name__ == "__main__":
-    env = gym.make('CartPole-v1')
+    env = gym.make('MountainCar-v0')
     agent = Agent(env.observation_space.shape[0], env.action_space.n)
     for episode in range(5000):
         run(env, agent)
