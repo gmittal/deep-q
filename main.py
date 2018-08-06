@@ -1,118 +1,83 @@
 import gym
-import math
 import numpy as np
+import os.path
 import random
-import tensorflow as tf
 from collections import deque
-from keras import backend as K
 from keras.models import Sequential
 from keras.layers import Dense
 
-def huber_loss(y_true, y_pred):
-    err = y_true - y_pred
-    cond = K.abs(err) < 1.0
-    L2 = 0.5 * K.square(err)
-    L1 = 1.0 * (K.abs(err) - 0.5 * 1.0)
-    loss = tf.where(cond, L2, L1)
-    return K.mean(loss)
+TRAINING_EPISODES = 10000
+
+class Memory:
+    def __init__(self, size):
+        self.memory = deque(maxlen=size)
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def add(self, sample):
+        self.memory.append(sample)
+
+    def __len__(self):
+        return len(self.memory)
 
 class Agent:
     def __init__(self, state_size, action_size):
         self.state_size = state_size
         self.action_size = action_size
 
-        self.memory = deque(maxlen=100000)
-        self.model = self.build()
-        self.model_ = self.build()
+        self.gamma = 0.95
+        self.epsilon = 1.0
+        self.epsilon_decay = 0.995
+        self.epsilon_min = 0.01
+        self.memory = Memory(10000)
+        self.model = self._build()
 
-        self.gamma = 0.99
-        self.epsilon = 1
-        self.min_epsilon = 0.01
-        self.decay = 0.001
-
-        self.steps = 0
-
-    def build(self):
+    def _build(self):
         model = Sequential()
-        model.add(Dense(64, activation='relu', input_dim=self.state_size))
+        model.add(Dense(24, input_dim=self.state_size, activation='relu'))
+        model.add(Dense(24, activation='relu'))
         model.add(Dense(self.action_size, activation='linear'))
-        model.compile(loss=huber_loss, optimizer='rmsprop')
+        model.compile(loss='mse', optimizer='adam')
+        if os.path.isfile('./save/model.h5'):
+            model.load_weights('./save/model.h5')
         return model
+
+    def _save(self):
+        self.model.save('./save/model.h5')
+
+    def observe(self, state, action, reward, next_state, done):
+        self.memory.add((state, action, reward, next_state, done))
 
     def act(self, state):
         if random.random() < self.epsilon:
-            return random.randint(0, self.action_size-1)
-        else:
-            return np.argmax(self.model.predict(state.reshape(1, self.state_size)).flatten())
+            return random.randrange(self.action_size)
+        return np.argmax(self.model.predict(state))
 
-    def observe(self, sample):
-        self.memory.append(sample)
-
-        if self.steps % 10 == 0:
-            self.model_.set_weights(self.model.get_weights())
-
-        self.steps += 1
-        self.epsilon = self.min_epsilon + (1 - self.min_epsilon) * math.exp(-self.decay * self.steps)
-
-    def replay(self):
-        if (self.steps < 64):
+    def learn(self, batch_size):
+        if len((self.memory)) < batch_size:
             return
 
-        batch = random.sample(self.memory, 64)
+        batch = self.memory.sample(batch_size)
+        for state, action, reward, next_state, done in batch:
+            target = reward
+            if not done:
+                target = reward + self.gamma * np.amax(self.model.predict(next_state)[0])
+                target_f = self.model.predict(state)
+                target_f[0][action] = target
+                self.model.fit(state, target_f, epochs=1, verbose=0)
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
 
-        no_state = np.zeros(self.state_size)
-        states = np.array([o[0] for o in batch])
-        next_states = np.array([(no_state if o[3] is None else o[3]) for o in batch])
 
-        p = self.model.predict(states)
-        p_ = self.model_.predict(next_states)
-
-        x = np.zeros((len(batch), self.state_size))
-        y = np.zeros((len(batch), self.action_size))
-
-        for i in range(len(batch)):
-            o = batch[i]
-            state = o[0]; action = o[1]; reward = o[2]; next_state = o[3]
-
-            target = p[i]
-            if next_state is None:
-                target[action] = reward
-            else:
-                target[action] = reward + self.gamma * np.amax(p_[i])
-
-            x[i] = state
-            y[i] = target
-
-        self.model.fit(x, y, batch_size=64, epochs=1, verbose=0)
-
-# Runs a single episode
-def run(env, agent):
-    state = env.reset()
-    R = 0
-
+env = gym.make('CartPole-v0')
+env.reset()
+for i_episode in range(TRAINING_EPISODES):
+    observation = env.reset()
     while True:
         env.render()
-        action = agent.act(state)
-        next_state, reward, done, info = env.step(action)
-
-        if done:
-            next_state = None
-
-        agent.observe((state, action, reward, next_state))
-        agent.replay()
-
-        state = next_state
-        R += reward
-
+        print(observation)
+        action = env.action_space.sample()
+        observation, reward, done, info = env.step(action)
         if done:
             break
-
-    print("Total reward: ", R)
-
-# Trains the DQN
-# Runs 5000 game episodes
-if __name__ == "__main__":
-    env = gym.make('CartPole-v1')
-    agent = Agent(env.observation_space.shape[0], env.action_space.n)
-    for episode in range(5000):
-        run(env, agent)
