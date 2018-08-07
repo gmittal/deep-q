@@ -13,12 +13,8 @@ EPISODES = 5000
 def huber_loss(target, prediction):
     return K.mean(K.sqrt(1+K.square(prediction-target))-1, axis=-1)
 
-def process_image(img):
-    rgb = scipy.misc.imresize(img, (84, 84), interp='bilinear')
-    r, g, b = rgb[:,:,0], rgb[:,:,1], rgb[:,:,2]
-    gray = 0.2989 * r + 0.5870 * g + 0.1140 * b     # extract luminance
-    o = gray.astype('uint8') / 128 - 1    # normalize
-    return o
+def preprocess_state(state):
+    return np.reshape(state, [1, 4])
 
 class Memory:
     def __init__(self, size):
@@ -49,12 +45,8 @@ class Agent:
 
     def _build_model(self):
         model = Sequential()
-        model.add(Conv2D(32, (8, 8), strides=(4,4), activation='relu', input_shape=(self.state_size), data_format='channels_first'))
-        model.add(Conv2D(64, (4, 4), strides=(2,2), activation='relu'))
-        model.add(Conv2D(64, (3, 3), activation='relu'))
-        model.add(Flatten())
-        model.add(Dense(units=512, activation='relu'))
-
+        model.add(Dense(24, input_dim=self.state_size, activation='tanh'))
+        model.add(Dense(48, activation='tanh'))
         model.add(Dense(units=self.action_size, activation='linear'))
         model.compile(loss=huber_loss,
                       optimizer=Adam(lr=self.learning_rate))
@@ -72,21 +64,22 @@ class Agent:
     def act(self, state):
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
-        act_values = self.model.predict(state.reshape(1, 2, 84, 84)).flatten()
+        act_values = self.model.predict(state)
         return np.argmax(act_values[0])
 
     def replay(self, batch_size):
         minibatch = self.memory.sample(batch_size)
         for state, action, reward, next_state, done in minibatch:
-            target = self.model.predict(state.reshape(1, 2, 84, 84))
+            target = self.model.predict(state)
             if done:
                 target[0][action] = reward
             else:
-                # a = self.model.predict(next_state)[0]
-                t = self.target_model.predict(next_state.reshape(1, 2, 84, 84))[0]
+                t = self.target_model.predict(next_state)[0]
                 target[0][action] = reward + self.gamma * np.amax(t)
-                # target[0][action] = reward + self.gamma * t[np.argmax(a)]
-            self.model.fit(state.reshape(1, 2, 84, 84), target, epochs=1, verbose=0)
+            self.model.fit(state, target, epochs=1, verbose=0)
+        # Epsilon decay
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
 
     def load(self, name):
         self.model.load_weights(name)
@@ -94,11 +87,10 @@ class Agent:
     def save(self, name):
         self.model.save_weights(name)
 
-
 if __name__ == "__main__":
-    env = gym.make('Pong-v0')
+    env = gym.make('CartPole-v1')
     env._max_episode_steps = None
-    state_size = (2, 84, 84)
+    state_size = env.observation_space.shape[0]
     action_size = env.action_space.n
     agent = Agent(state_size, action_size)
 
@@ -108,10 +100,8 @@ if __name__ == "__main__":
     frames = 0
 
     for e in range(EPISODES):
-        img = env.reset()
-        w = process_image(img)
-        state = np.array([w, w])
-        print(state.shape)
+        state = env.reset()
+        state = preprocess_state(state)
 
         total_reward = 0
 
@@ -119,18 +109,20 @@ if __name__ == "__main__":
             frames += 1
             # env.render()
             action = agent.act(state)
-            img, reward, done, _ = env.step(action)
-            next_state = np.array([state[1], process_image(img)])
-            reward = np.clip(reward, -1, 1)   # clip reward to [-1, 1]
-
+            next_state, reward, done, _ = env.step(action)
+            reward = reward if not done else -10
+            next_state = preprocess_state(next_state)
             agent.remember(state, action, reward, next_state, done)
-            if len(agent.memory) > batch_size:
-                agent.replay(batch_size)
+
+            state = next_state
             total_reward += reward
 
-            if frames > 10:
+            if frames > 100:
                 frames = 0
                 agent.update_target_model()
+
+            if len(agent.memory) > batch_size:
+                agent.replay(batch_size)
 
             if done:
                 print("episode: {}/{}, score: {}, e: {:.2}"
