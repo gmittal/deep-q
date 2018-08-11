@@ -20,7 +20,7 @@ def get_epsilon(e):
 
 def build_model():
     model = Sequential()
-    model.add(Dense(60, input_dim=STATE_SIZE, activation='relu'))
+    model.add(Dense(200, input_shape=(STATE_SIZE,), activation='relu'))
     model.add(Dense(40, activation='relu'))
     model.add(Dense(ACTION_SIZE, activation='linear'))
     model.compile(loss='mse',
@@ -30,10 +30,14 @@ def build_model():
 def remember(state, action, reward, next_state, done):
     MEMORY.append((state, action, reward, next_state, done))
 
+def predict(state):
+    state = np.reshape(state, [1, STATE_SIZE])
+    return model.predict(state)
+
 def act(state):
     if np.random.rand() <= EPSILON:
         return random.randrange(ACTION_SIZE)
-    act_values = model.predict(state)
+    act_values = predict(state)
     return np.argmax(act_values[0])  # returns action
 
 def replay(batch_size):
@@ -42,25 +46,27 @@ def replay(batch_size):
         target = reward
         if not done:
             target = (reward + GAMMA *
-                      np.amax(model.predict(next_state)[0]))
-        target_f = model.predict(state)
+                      np.amax(predict(next_state)[0]))
+        target_f = predict(state)
         target_f[0][action] = target
+
+        state = np.reshape(state, [1, STATE_SIZE])
         model.fit(state, target_f, epochs=1, verbose=0)
 
 
-env = gym.make('CartPole-v1')
+env = gym.make('Pong-v0')
 
-EPISODES = 1000
+EPISODES = 6000
 LEARNING_RATE = 1e-4
-BATCH_SIZE = 32
+BATCH_SIZE = 1000
 
-STATE_SIZE = 4#80 * 80
+STATE_SIZE = 80 * 80
 ACTION_SIZE = env.action_space.n
-MEMORY = deque(maxlen=2000)
+MEMORY = deque(maxlen=10000)
 GAMMA = 0.99
 EPSILON = 1.0
 EPSILON_MIN = 0.01
-EPSILON_DECAY=0.9995
+EPSILON_DECAY=0.995
 
 model = build_model()
 
@@ -71,17 +77,23 @@ if __name__ == "__main__":
 
     for e in range(EPISODES):
         state = env.reset()
-        state = np.reshape(state, [1, STATE_SIZE])
+        prev = None
         R = 0
         done = False
         while not done:
             env.render()
+
+            curr = preprocess(state)
+            state = curr - prev if prev is not None else np.zeros(STATE_SIZE)
+            prev = curr
+
             action = act(state)
-            next_state, reward, done, _ = env.step(action)
-            reward = reward if not done else -10
-            next_state = np.reshape(next_state, [1, STATE_SIZE])
+            state_, reward, done, _ = env.step(action)
+            curr_ = preprocess(state_)
+            next_state = curr_ - prev
             remember(state, action, reward, next_state, done)
-            state = next_state
+            state = state_
+            print(reward)
 
             R += reward
 
@@ -92,5 +104,5 @@ if __name__ == "__main__":
                       .format(e, EPISODES, R, EPSILON, avg))
                 EPSILON = get_epsilon(e)
                 break
-            if (e % 10 == 0 and e > 0):
-                replay(BATCH_SIZE)
+        if (e % 10 == 0 and e > 0):
+            replay(BATCH_SIZE)
