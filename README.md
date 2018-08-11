@@ -1,2 +1,2 @@
-# dqn
-Experiments with Deep Q Learning and Keras.
+# Deep Q Learning
+Experiments with deep reinforcement learning.
